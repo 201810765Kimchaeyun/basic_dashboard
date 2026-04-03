@@ -396,7 +396,7 @@ def render_cohort_analysis(df):
     # 안내 메시지
     st.markdown(f"""
         <div style='background: #fef3c7; padding: 0.75rem; border-radius: 6px; margin-bottom: 1rem; font-size: 0.9rem;'>
-            💡 <strong>만료일이 지난 결제만 선택 가능</strong><br>
+            💡 <strong>멤버십이 만료된 일자만 선택 가능</strong><br>
             선택 가능 최대: {max_date.strftime('%Y-%m-%d')} (오늘 기준 31일 전 결제)
         </div>
     """, unsafe_allow_html=True)
@@ -445,7 +445,7 @@ def render_cohort_analysis(df):
                     border-left: 4px solid #3b82f6; padding: 1.25rem; border-radius: 8px; margin-bottom: 2rem;'>
             <h3 style='margin: 0 0 0.75rem 0; color: #1e40af;'>📊 코호트 분석 대상 모수</h3>
             <strong>📅 분석 기간:</strong> {start_date.strftime('%Y년 %m월 %d일')} ~ {end_date.strftime('%Y년 %m월 %d일')}<br>
-            <strong>👥 초기 모수:</strong> {unique_users:,}명 (고유 사용자)<br>
+            <strong>👥 멤버십 만료 모수:</strong> {unique_users:,}명<br>
             <div style='margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid rgba(59, 130, 246, 0.3);'>
                 <strong>회원 성분:</strong><br>
                 • 첫결제: {segments['첫결제']}명 ({segments['첫결제']/unique_users*100:.1f}%)<br>
@@ -508,7 +508,7 @@ def render_cohort_analysis(df):
         'retain_rate', 'upgrade_rate', 'churn_rate'
     ]].rename(columns={
         'cohort_date': '코호트 날짜',
-        'initial_users': '초기 결제자',
+        'initial_users': '결제자 모수',
         'retain': 'Basic 유지',
         'upgrade': '업그레이드',
         'churn': '이탈(잠재결제자)',
