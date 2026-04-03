@@ -8,7 +8,7 @@ from io import StringIO
 
 # 페이지 설정
 st.set_page_config(
-    page_title="Basic 요금제 코호트 분석",
+    page_title="Basic 요금제 분석",
     page_icon="📊",
     layout="wide"
 )
