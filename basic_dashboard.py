@@ -168,7 +168,7 @@ def analyze_cohorts(df_full, df_cohort=None):
                     first_renewal = after_expiry.iloc[0]
                     if first_renewal['product'] == 9:
                         retain += 1
-                    elif first_renewal['product'] in [2, 6, 8]:
+                    elif first_renewal['product'] in [2, 6, 7, 8]:
                         upgrade += 1
                     else:
                         churn += 1
@@ -190,31 +190,53 @@ def analyze_cohorts(df_full, df_cohort=None):
     
     return pd.DataFrame(results)
 
-def analyze_user_segments(df):
-    """사용자 세그먼트 분석"""
-    basic_users = df[df['product'] == 9]['idx'].unique()
+def analyze_user_segments(df_filtered, df_full):
+    """사용자 세그먼트 분석
+    
+    Args:
+        df_filtered: 필터링된 데이터 (코호트 대상 유저 추출용)
+        df_full: 전체 데이터 (이전 결제 이력 조회용)
+    """
+    basic_users = df_filtered[df_filtered['product'] == 9]['idx'].unique()
     
     segments = {
         '첫결제': 0,
         '결제 이력 있음': 0,
-        '기타': 0
+        'Basic 재결제자': 0,
     }
     
+    # 결제 이력 있음 세부 카운트
+    detail = {
+        '프리미엄': 0,
+        'Basic': 0,
+    }
+
     for user_id in basic_users:
-        user_payments = df[df['idx'] == user_id].sort_values('create')
-        first_basic = user_payments[user_payments['product'] == 9].iloc[0]
+        # 코호트 기간 내 해당 유저의 첫 Basic 결제
+        user_filtered = df_filtered[df_filtered['idx'] == user_id]
+        first_basic = user_filtered[user_filtered['product'] == 9].sort_values('create').iloc[0]
         
         if first_basic['first'] == 1:
             segments['첫결제'] += 1
         else:
-            premium_payments = user_payments[(user_payments['product'].isin([2, 6, 8])) & 
-                                            (user_payments['create'] < first_basic['create'])]
-            if len(premium_payments) > 0:
+            # 이전 결제 이력은 전체 데이터에서 조회
+            all_user_payments = df_full[df_full['idx'] == user_id]
+            prior_payments = all_user_payments[all_user_payments['create'] < first_basic['create']]
+            prior_premium = prior_payments[prior_payments['product'].isin([2, 6, 7, 8])]
+            prior_basic = prior_payments[prior_payments['product'] == 9]
+            
+            if len(prior_premium) > 0:
                 segments['결제 이력 있음'] += 1
+                # 직전 결제가 프리미엄인지 Basic인지
+                last_payment = prior_payments.sort_values('create').iloc[-1]
+                if last_payment['product'] in [2, 6, 7, 8]:
+                    detail['프리미엄'] += 1
+                else:
+                    detail['Basic'] += 1
             else:
-                segments['기타'] += 1
+                segments['Basic 재결제자'] += 1
     
-    return segments
+    return segments, detail
 
 def highlight_total_row(row):
     """총합 행 강조 스타일"""
@@ -280,11 +302,11 @@ def render_payment_status(df):
     st.markdown("*결제자 성분을 분석한 결과입니다*")
     
     # 각 결제 건에 대해 성분 분석 및 국가별 집계
-    segments = {'첫결제': 0, '결제 이력 있음': 0, '기타': 0}
+    segments = {'첫결제': 0, '결제 이력 있음': 0, 'Basic 재결제자': 0}
     country_by_segment = {
         '첫결제': {},
         '결제 이력 있음': {},
-        '기타': {}
+        'Basic 재결제자': {},
     }
     
     for _, payment in basic_payments.iterrows():
@@ -292,23 +314,19 @@ def render_payment_status(df):
         payment_date = payment['create']
         country = payment['country']
         
-        # 해당 결제가 첫결제인지 확인
         if payment['first'] == 1:
             segment = '첫결제'
             segments[segment] += 1
         else:
-            # 해당 결제 이전에 프리미엄 결제 이력이 있는지 확인
             user_payments = df[df['idx'] == user_id]
-            prior_premium = user_payments[
-                (user_payments['product'].isin([2, 6, 8])) & 
-                (user_payments['create'] < payment_date)
-            ]
+            prior_payments = user_payments[user_payments['create'] < payment_date]
+            prior_premium = prior_payments[prior_payments['product'].isin([2, 6, 7, 8])]
             
             if len(prior_premium) > 0:
                 segment = '결제 이력 있음'
                 segments[segment] += 1
             else:
-                segment = '기타'
+                segment = 'Basic 재결제자'
                 segments[segment] += 1
         
         # 국가별 집계
@@ -336,7 +354,7 @@ def render_payment_status(df):
             color_discrete_map={
                 '첫결제': COLORS['retain'],
                 '결제 이력 있음': COLORS['downgrade'],
-                '기타': COLORS['pending']
+                'Basic 재결제자': COLORS['upgrade'],
             }
         )
         fig.update_traces(
@@ -354,9 +372,9 @@ def render_payment_status(df):
     # 성분별 국가 분포
     st.markdown("### 🌍 성분별 국가 분포")
     
-    tab1, tab2, tab3 = st.tabs(["첫결제", "결제 이력 있음", "기타"])
+    tab1, tab2, tab3 = st.tabs(["첫결제", "결제 이력 있음", "Basic 재결제자"])
     
-    for idx, (tab, segment) in enumerate([(tab1, '첫결제'), (tab2, '결제 이력 있음'), (tab3, '기타')]):
+    for idx, (tab, segment) in enumerate([(tab1, '첫결제'), (tab2, '결제 이력 있음'), (tab3, 'Basic 재결제자')]):
         with tab:
             country_data = country_by_segment[segment]
             if country_data:
@@ -434,7 +452,7 @@ def render_cohort_analysis(df):
     
     # 코호트 분석 (전체 df와 필터링된 df 모두 전달)
     cohort_results = analyze_cohorts(df, df_filtered)
-    segments = analyze_user_segments(df_filtered)
+    segments, seg_detail = analyze_user_segments(df_filtered, df)
     
     # 코호트 분석 대상 모수
     basic_payments = df_filtered[df_filtered['product'] == 9]
@@ -450,7 +468,10 @@ def render_cohort_analysis(df):
                 <strong>회원 성분:</strong><br>
                 • 첫결제: {segments['첫결제']}명 ({segments['첫결제']/unique_users*100:.1f}%)<br>
                 • 결제 이력 있음: {segments['결제 이력 있음']}명 ({segments['결제 이력 있음']/unique_users*100:.1f}%)<br>
-                • 기타: {segments['기타']}명 ({segments['기타']/unique_users*100:.1f}%)
+                <span style='margin-left: 1.2em; color: #475569; font-size: 0.9em;'>
+                └ 프리미엄: {seg_detail['프리미엄']}명 &nbsp;·&nbsp; Basic: {seg_detail['Basic']}명
+                </span><br>
+                • Basic 재결제자: {segments['Basic 재결제자']}명 ({segments['Basic 재결제자']/unique_users*100:.1f}%)
             </div>
         </div>
     """, unsafe_allow_html=True)
@@ -465,8 +486,10 @@ def render_cohort_analysis(df):
         ascending=(sort_order == "오래된순")
     )
     
-    display_cohorts = sorted_cohorts.head(7) if len(sorted_cohorts) > 7 else sorted_cohorts
-    
+    ROW_HEIGHT = 35
+    HEADER_HEIGHT = 38
+    MAX_VISIBLE_ROWS = 10
+
     # 총합 행 계산
     total_summary = {
         'cohort_date': '총합',
@@ -479,7 +502,7 @@ def render_cohort_analysis(df):
         'upgrade_rate': '',
         'churn_rate': ''
     }
-    
+
     # 총합의 비율 계산 (만료된 것만)
     renewable_total = sorted_cohorts[sorted_cohorts['renewable'] == True]
     if len(renewable_total) > 0:
@@ -491,18 +514,17 @@ def render_cohort_analysis(df):
             total_summary['retain_rate'] = f"{round(total_retain / total * 100, 1)}%"
             total_summary['upgrade_rate'] = f"{round(total_upgrade / total * 100, 1)}%"
             total_summary['churn_rate'] = f"{round(total_churn / total * 100, 1)}%"
-    
+
     # 율 컬럼에 % 추가
-    display_cohorts_copy = display_cohorts.copy()
-    display_cohorts_copy['retain_rate'] = display_cohorts_copy['retain_rate'].apply(lambda x: f"{x}%" if x != '' and x == x else '')
-    display_cohorts_copy['upgrade_rate'] = display_cohorts_copy['upgrade_rate'].apply(lambda x: f"{x}%" if x != '' and x == x else '')
-    display_cohorts_copy['churn_rate'] = display_cohorts_copy['churn_rate'].apply(lambda x: f"{x}%" if x != '' and x == x else '')
-    
-    # 총합 행 추가
+    all_cohorts_copy = sorted_cohorts.copy()
+    all_cohorts_copy['retain_rate'] = all_cohorts_copy['retain_rate'].apply(lambda x: f"{x}%" if x != '' and x == x else '')
+    all_cohorts_copy['upgrade_rate'] = all_cohorts_copy['upgrade_rate'].apply(lambda x: f"{x}%" if x != '' and x == x else '')
+    all_cohorts_copy['churn_rate'] = all_cohorts_copy['churn_rate'].apply(lambda x: f"{x}%" if x != '' and x == x else '')
+
+    # 총합 행을 맨 위에 고정
     total_row_df = pd.DataFrame([total_summary])
-    display_with_total = pd.concat([display_cohorts_copy, total_row_df], ignore_index=True)
-    
-    # 총합 행 스타일 적용
+    display_with_total = pd.concat([total_row_df, all_cohorts_copy], ignore_index=True)
+
     styled_df = display_with_total[[
         'cohort_date', 'initial_users', 'retain', 'upgrade', 'churn',
         'retain_rate', 'upgrade_rate', 'churn_rate'
@@ -516,44 +538,20 @@ def render_cohort_analysis(df):
         'upgrade_rate': '업그레이드율',
         'churn_rate': '이탈율'
     }).style.apply(highlight_total_row, axis=1)
-    
+
+    # 10개 초과 시 스크롤 테이블, 이하면 전체 높이 자동 맞춤
+    n_rows = len(sorted_cohorts) + 1  # 데이터 행 + 총합 행
+    if n_rows > MAX_VISIBLE_ROWS:
+        table_height = (MAX_VISIBLE_ROWS + 1) * ROW_HEIGHT + HEADER_HEIGHT
+    else:
+        table_height = n_rows * ROW_HEIGHT + HEADER_HEIGHT
+
     st.dataframe(
         styled_df,
         hide_index=True,
-        use_container_width=True
+        use_container_width=True,
+        height=table_height
     )
-    
-    if len(sorted_cohorts) > 7:
-        if st.button(f"더보기 ({len(sorted_cohorts) - 7}개 더 있음)", key="cohort_more"):
-            # 전체 데이터에 % 추가
-            all_cohorts_copy = sorted_cohorts.copy()
-            all_cohorts_copy['retain_rate'] = all_cohorts_copy['retain_rate'].apply(lambda x: f"{x}%" if x != '' and x == x else '')
-            all_cohorts_copy['upgrade_rate'] = all_cohorts_copy['upgrade_rate'].apply(lambda x: f"{x}%" if x != '' and x == x else '')
-            all_cohorts_copy['churn_rate'] = all_cohorts_copy['churn_rate'].apply(lambda x: f"{x}%" if x != '' and x == x else '')
-            
-            # 전체 데이터에 총합 행 추가
-            all_with_total = pd.concat([all_cohorts_copy, total_row_df], ignore_index=True)
-            
-            # 총합 행 스타일 적용
-            styled_all = all_with_total[[
-                'cohort_date', 'initial_users', 'retain', 'upgrade', 'churn',
-                'retain_rate', 'upgrade_rate', 'churn_rate'
-            ]].rename(columns={
-                'cohort_date': '코호트 날짜',
-                'initial_users': '초기 결제자',
-                'retain': 'Basic 유지',
-                'upgrade': '업그레이드',
-                'churn': '이탈(잠재결제자)',
-                'retain_rate': '유지율',
-                'upgrade_rate': '업그레이드율',
-                'churn_rate': '이탈율'
-            }).style.apply(highlight_total_row, axis=1)
-            
-            st.dataframe(
-                styled_all,
-                hide_index=True,
-                use_container_width=True
-            )
     
     # 전환 흐름 요약
     st.markdown("### 🔄 전환 흐름 요약")
@@ -656,7 +654,7 @@ def render_cohort_analysis(df):
                 if first_renewal['product'] == 9:
                     tier_dist['retain'][tier] += 1
                     country_dist['retain'][country] = country_dist['retain'].get(country, 0) + 1
-                elif first_renewal['product'] in [2, 6, 8]:
+                elif first_renewal['product'] in [2, 6, 7, 8]:
                     tier_dist['upgrade'][tier] += 1
                     country_dist['upgrade'][country] = country_dist['upgrade'].get(country, 0) + 1
                 else:
@@ -793,7 +791,7 @@ def render_cohort_analysis(df):
             
             if len(after_expiry) > 0:
                 first_renewal = after_expiry.iloc[0]
-                if first_renewal['product'] in [2, 6, 8]:
+                if first_renewal['product'] in [2, 6, 7, 8]:
                     product = first_renewal['product']
                     upgrade_products[product] = upgrade_products.get(product, 0) + 1
     
@@ -801,6 +799,7 @@ def render_cohort_analysis(df):
         9: 'Basic',
         2: 'Premium',
         6: 'Premium One Pass',
+        7: 'Premium (7)',
         8: 'Premium in-app'
     }
     
